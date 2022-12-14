@@ -74,7 +74,7 @@ loaders:
   train:
     # path to the training datasets
     file_paths:
-      - PATH_TO_TRAIN_DIR
+      - 3dunet_datasets/Movie1_t00003_crop_gt.h5
 
     # SliceBuilder configuration, i.e. how to iterate over the input volume patch-by-patch
     slice_builder:
@@ -128,7 +128,7 @@ loaders:
   val:
     # path to the val datasets
     file_paths:
-      - PATH_TO_VAL_DIR
+      - 3dunet_datasets/Movie1_t00004_crop_gt.h5
 
     # SliceBuilder configuration, i.e. how to iterate over the input volume patch-by-patch
     slice_builder:
