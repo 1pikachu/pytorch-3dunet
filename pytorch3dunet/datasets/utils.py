@@ -209,6 +209,7 @@ def get_train_loaders(config):
     num_workers = loaders_config.get('num_workers', 1)
     logger.info(f'Number of workers for train/val dataloader: {num_workers}')
     batch_size = loaders_config.get('batch_size', 1)
+    print("---------batch size: ", batch_size)
     if torch.cuda.device_count() > 1 and not config['device'].type == 'cpu':
         logger.info(
             f'{torch.cuda.device_count()} GPUs available. Using batch_size = {torch.cuda.device_count()} * {batch_size}')
