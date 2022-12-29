@@ -1,4 +1,5 @@
 import os
+import time
 
 import torch
 import torch.nn as nn
@@ -29,6 +30,18 @@ def create_trainer(config):
     logger.info(f"Sending the model to '{config['device']}'")
     model = model.to(device)
 
+    if config['channels_last']:
+        try:
+            if config['model']['name'] == "UNet2D":
+                model = model.to(memory_format=torch.channels_last)
+                print("--- use NHWC format")
+            elif config['model']['name'] == "UNet3D":
+                model = model.to(memory_format=torch.channels_last_3d)
+                print("--- use NDHWC format")
+        except RuntimeError as e:
+            print("---- use normal format")
+            print("failed to enable NHWC: ", e)
+
     # Log the number of learnable parameters
     logger.info(f'Number of learnable params {get_number_of_learnable_parameters(model)}')
 
@@ -42,6 +55,9 @@ def create_trainer(config):
 
     # Create the optimizer
     optimizer = create_optimizer(config['optimizer'], model)
+    if config['device'] == "xpu":
+        datatype = torch.float16 if config['precision'] == "float16" else torch.bfloat16 if config['precision'] == "bfloat16" else torch.float
+        model, optimizer = torch.xpu.optimize(model=model, optimizer=optimizer, dtype=datatype)
 
     # Create learning rate adjustment strategy
     lr_scheduler = create_lr_scheduler(config.get('lr_scheduler', None), optimizer)
@@ -63,6 +79,7 @@ def create_trainer(config):
                          loaders=loaders,
                          resume=resume,
                          pre_trained=pre_trained,
+                         config=config,
                          **trainer_config)
 
 
@@ -105,7 +122,7 @@ class UNet3DTrainer:
                  validate_iters=None, num_iterations=1, num_epoch=0,
                  eval_score_higher_is_better=True,
                  tensorboard_formatter=None, skip_train_validation=False,
-                 resume=None, pre_trained=None, **kwargs):
+                 resume=None, pre_trained=None, config=None, **kwargs):
 
         self.model = model
         self.optimizer = optimizer
@@ -121,6 +138,7 @@ class UNet3DTrainer:
         self.log_after_iters = log_after_iters
         self.validate_iters = validate_iters
         self.eval_score_higher_is_better = eval_score_higher_is_better
+        self.config = config
 
         logger.info(model)
         logger.info(f'eval_score_higher_is_better: {eval_score_higher_is_better}')
@@ -136,8 +154,8 @@ class UNet3DTrainer:
         assert tensorboard_formatter is not None, 'TensorboardFormatter must be provided'
         self.tensorboard_formatter = tensorboard_formatter
 
-        self.num_iterations = num_iterations
-        self.num_epochs = num_epoch
+        self.num_iterations = 0
+        self.num_epochs = 0
         self.skip_train_validation = skip_train_validation
 
         if resume is not None:
@@ -181,10 +199,14 @@ class UNet3DTrainer:
         # sets the model in training mode
         self.model.train()
 
+        total_time = 0.0
+        total_count = 0
+        profile_len = self.config['num_iter'] // 2
         for t in self.loaders['train']:
             logger.info(f'Training iteration [{self.num_iterations}/{self.max_num_iterations}]. '
                         f'Epoch [{self.num_epochs}/{self.max_num_epochs - 1}]')
 
+            start_time = time.time()
             input, target, weight = self._split_training_batch(t)
 
             output, loss = self._forward_pass(input, target, weight)
@@ -196,46 +218,24 @@ class UNet3DTrainer:
             loss.backward()
             self.optimizer.step()
 
-            if self.num_iterations % self.validate_after_iters == 0:
-                # set the model in eval mode
-                self.model.eval()
-                # evaluate on validation set
-                eval_score = self.validate()
-                # set the model back to training mode
-                self.model.train()
-
-                # adjust learning rate if necessary
-                if isinstance(self.scheduler, ReduceLROnPlateau):
-                    self.scheduler.step(eval_score)
-                else:
-                    self.scheduler.step()
-                # log current learning rate in tensorboard
-                self._log_lr()
-                # remember best validation metric
-                is_best = self._is_best_eval_score(eval_score)
-
-                # save checkpoint
-                self._save_checkpoint(is_best)
-
-            if self.num_iterations % self.log_after_iters == 0:
-                # compute eval criterion
-                if not self.skip_train_validation:
-                    eval_score = self.eval_criterion(output, target)
-                    train_eval_scores.update(eval_score.item(), self._batch_size(input))
-
-                # log stats, params and images
-                logger.info(
-                    f'Training stats. Loss: {train_losses.avg}. Evaluation score: {train_eval_scores.avg}')
-                self._log_stats('train', train_losses.avg, train_eval_scores.avg)
-                self._log_params()
-                self._log_images(input, target, output, 'train_')
-
-            if self.should_stop():
-                return True
+            duration = time.time() - start_time
+            print("iteration:{}, training time: {} sec.".format(self.num_iterations, duration))
+            if self.num_iterations >= self.config['num_warmup']:
+                total_time += duration
+                total_count += 1
+            if self.num_iterations >= self.config['num_iter']:
+                break
 
             self.num_iterations += 1
 
-        return False
+        batch_size = self.config['loaders']['batch_size']
+        avg_time = total_time / total_count
+        latency = avg_time / batch_size * 1000
+        perf = batch_size / avg_time
+        print("total time:{}, total count:{}".format(total_time, total_count))
+        print('%d epoch training latency: %6.2f ms'%(0, latency))
+        print('%d epoch training Throughput: %6.2f fps'%(0, perf))
+        return True
 
     def should_stop(self):
         """
