@@ -37,6 +37,7 @@ def load_config():
     device_str = args.device
     device = torch.device(device_str)
     config['device'] = device
+    config['device_str'] = device_str
     config['loaders']['batch_size'] = args.batch_size
     config['precision'] = args.precision
     config['channels_last'] = args.channels_last

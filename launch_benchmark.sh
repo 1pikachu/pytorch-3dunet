@@ -22,10 +22,10 @@ function main {
         #
 	if [ ${model_name} == "unet2d" ];then
 	    train_config=resources/2DUnet_dsb2018/train_config.yml
-	    ln -s ${DATASET_DIR} 2dunet_datasets
+	    ln -sf ${DATASET_DIR} 2dunet_datasets
 	elif [ ${model_name} == "unet3d" ];then
 	    train_config=resources/3DUnet_confocal_boundary/train_config.yml
-	    ln -s ${DATASET_DIR} 3dunet_datasets
+	    ln -sf ${DATASET_DIR} 3dunet_datasets
 	fi
         for batch_size in ${batch_size_list[@]}
         do

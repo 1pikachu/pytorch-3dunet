@@ -30,14 +30,10 @@ def create_trainer(config):
     logger.info(f"Sending the model to '{config['device']}'")
     model = model.to(device)
 
-    if config['channels_last']:
+    if config['channels_last'] and device != "xpu":
         try:
-            if config['model']['name'] == "UNet2D":
-                model = model.to(memory_format=torch.channels_last)
-                print("--- use NHWC format")
-            elif config['model']['name'] == "UNet3D":
-                model = model.to(memory_format=torch.channels_last_3d)
-                print("--- use NDHWC format")
+            model = model.to(memory_format=torch.channels_last_3d)
+            print("--- use NDHWC format")
         except RuntimeError as e:
             print("---- use normal format")
             print("failed to enable NHWC: ", e)
@@ -202,31 +198,167 @@ class UNet3DTrainer:
         total_time = 0.0
         total_count = 0
         profile_len = self.config['num_iter'] // 2
-        for t in self.loaders['train']:
-            logger.info(f'Training iteration [{self.num_iterations}/{self.max_num_iterations}]. '
-                        f'Epoch [{self.num_epochs}/{self.max_num_epochs - 1}]')
+        datatype = torch.float16 if self.config['precision'] == "float16" else torch.bfloat16 if self.config['precision'] == "bfloat16" else torch.float
+        if self.config['profile'] and self.config['device_str'] == "xpu":
+            for t in self.loaders['train']:
+                logger.info(f'Training iteration [{self.num_iterations}/{self.max_num_iterations}]. '
+                            f'Epoch [{self.num_epochs}/{self.max_num_epochs - 1}]')
 
-            start_time = time.time()
-            input, target, weight = self._split_training_batch(t)
+                start_time = time.time()
+                # to device
+                input, target, weight = self._split_training_batch(t)
+                with torch.autograd.profiler_legacy.profile(enabled=True, use_xpu=True, record_shapes=False) as prof:
+                    with torch.xpu.amp.autocast(enabled=True, dtype=datatype):
+                        output, loss = self._forward_pass(input, target, weight)
 
-            output, loss = self._forward_pass(input, target, weight)
+                train_losses.update(loss.item(), self._batch_size(input))
 
-            train_losses.update(loss.item(), self._batch_size(input))
+                # compute gradients and update parameters
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
 
-            # compute gradients and update parameters
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+                output = output.cpu()
+                loss = loss.cpu()
+                torch.xpu.synchronize()
+                duration = time.time() - start_time
+                print("iteration:{}, training time: {} sec.".format(self.num_iterations, duration))
+                if self.num_iterations >= self.config['num_warmup']:
+                    total_time += duration
+                    total_count += 1
+                if args.profile and self.num_iterations == profile_len:
+                    import pathlib
+                    timeline_dir = str(pathlib.Path.cwd()) + '/timeline/'
+                    if not os.path.exists(timeline_dir):
+                        try:
+                            os.makedirs(timeline_dir)
+                        except:
+                            pass
+                    torch.save(prof.key_averages().table(sort_by="self_xpu_time_total"),
+                        timeline_dir+'profile.pt')
+                    torch.save(prof.key_averages(group_by_input_shape=True).table(),
+                        timeline_dir+'profile_detail.pt')
+                    torch.save(prof.table(sort_by="id", row_limit=100000),
+                        timeline_dir+'profile_detail_withId.pt')
+                    prof.export_chrome_trace(timeline_dir+"trace.json")
+                if self.num_iterations >= self.config['num_iter']:
+                    break
 
-            duration = time.time() - start_time
-            print("iteration:{}, training time: {} sec.".format(self.num_iterations, duration))
-            if self.num_iterations >= self.config['num_warmup']:
-                total_time += duration
-                total_count += 1
-            if self.num_iterations >= self.config['num_iter']:
-                break
+                self.num_iterations += 1
+        
+        elif self.config['profile'] and self.config['device_str'] != "xpu":
+            if self.config['device_str'] == "cuda":
+                profile_act = [torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]
+            else:
+                profile_act = [torch.profiler.ProfilerActivity.CPU]
+            with torch.profiler.profile(
+                activities=profile_act,
+                record_shapes=True,
+                schedule=torch.profiler.schedule(
+                    wait=profile_len,
+                    warmup=2,
+                    active=1,
+                ),
+                on_trace_ready=self.trace_handler,
+            ) as p:
+                for t in self.loaders['train']:
+                    logger.info(f'Training iteration [{self.num_iterations}/{self.max_num_iterations}]. '
+                                f'Epoch [{self.num_epochs}/{self.max_num_epochs - 1}]')
 
-            self.num_iterations += 1
+                    start_time = time.time()
+                    # to device
+                    input, target, weight = self._split_training_batch(t)
+
+                    cl_start_time = time.time()
+                    if self.config['channels_last'] and self.config['device_str'] != "xpu":
+                        try:
+                            input = input.to(memory_format=torch.channels_last_3d)
+                            print("---input use NDHWC format")
+                        except RuntimeError as e:
+                            print("----input use normal format")
+                            print("failed to enable NHWC: ", e)
+                    cl_duration = time.time() - cl_start_time
+
+                    if self.config['device_str'] == "cuda":
+                        with torch.cuda.amp.autocast(enabled=True, dtype=datatype):
+                            output, loss = self._forward_pass(input, target, weight)
+                    else:
+                        with torch.cpu.amp.autocast(enabled=True, dtype=datatype):
+                            output, loss = self._forward_pass(input, target, weight)
+
+                    train_losses.update(loss.item(), self._batch_size(input))
+
+                    # compute gradients and update parameters
+                    self.optimizer.zero_grad()
+                    loss.backward()
+                    self.optimizer.step()
+
+                    output = output.cpu()
+                    loss = loss.cpu()
+                    if self.config['device_str'] == "cuda":
+                        torch.cuda.synchronize()
+                    duration = time.time() - start_time - cl_duration
+                    p.step()
+                    print("iteration:{}, training time: {} sec.".format(self.num_iterations, duration))
+                    if self.num_iterations >= self.config['num_warmup']:
+                        total_time += duration
+                        total_count += 1
+                    if self.num_iterations >= self.config['num_iter']:
+                        break
+
+                    self.num_iterations += 1
+
+        else:
+            for t in self.loaders['train']:
+                logger.info(f'Training iteration [{self.num_iterations}/{self.max_num_iterations}]. '
+                            f'Epoch [{self.num_epochs}/{self.max_num_epochs - 1}]')
+
+                start_time = time.time()
+                # to device
+                input, target, weight = self._split_training_batch(t)
+
+                cl_start_time = time.time()
+                if self.config['channels_last'] and self.config['device_str'] != "xpu":
+                    try:
+                        input = input.to(memory_format=torch.channels_last_3d)
+                        print("---input use NDHWC format")
+                    except RuntimeError as e:
+                        print("----input use normal format")
+                        print("failed to enable NHWC: ", e)
+                cl_duration = time.time() - cl_start_time
+
+                if self.config['device_str'] == "cuda":
+                    with torch.cuda.amp.autocast(enabled=True, dtype=datatype):
+                        output, loss = self._forward_pass(input, target, weight)
+                elif self.config['device_str'] == "xpu":
+                    with torch.xpu.amp.autocast(enabled=True, dtype=datatype):
+                        output, loss = self._forward_pass(input, target, weight)
+                else:
+                    with torch.cpu.amp.autocast(enabled=True, dtype=datatype):
+                        output, loss = self._forward_pass(input, target, weight)
+
+                train_losses.update(loss.item(), self._batch_size(input))
+
+                # compute gradients and update parameters
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+
+                output = output.cpu()
+                loss = loss.cpu()
+                if self.config['device_str'] == "cuda":
+                    torch.cuda.synchronize()
+                elif self.config['device_str'] == "xpu":
+                    torch.xpu.synchronize()
+                duration = time.time() - start_time - cl_duration
+                print("iteration:{}, training time: {} sec.".format(self.num_iterations, duration))
+                if self.num_iterations >= self.config['num_warmup']:
+                    total_time += duration
+                    total_count += 1
+                if self.num_iterations >= self.config['num_iter']:
+                    break
+
+                self.num_iterations += 1
 
         batch_size = self.config['loaders']['batch_size']
         avg_time = total_time / total_count
@@ -386,6 +518,20 @@ class UNet3DTrainer:
         for name, batch in img_sources.items():
             for tag, image in self.tensorboard_formatter(name, batch):
                 self.writer.add_image(prefix + tag, image, self.num_iterations)
+
+    def trace_handler(self, p):
+        output = p.key_averages().table(sort_by="self_cpu_time_total")
+        print(output)
+        import pathlib
+        timeline_dir = str(pathlib.Path.cwd()) + '/timeline/'
+        if not os.path.exists(timeline_dir):
+            try:
+                os.makedirs(timeline_dir)
+            except:
+                pass
+        timeline_file = timeline_dir + 'timeline-' + str(torch.backends.quantized.engine) + \
+                '-' + str(p.step_num) + '-' + str(os.getpid()) + '.json'
+        p.export_chrome_trace(timeline_file)
 
     @staticmethod
     def _batch_size(input):
