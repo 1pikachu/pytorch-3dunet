@@ -24,6 +24,10 @@ def main():
         torch.backends.cudnn.deterministic = True
 
     # create trainer
+    if config['device_str'] == "xpu":
+        import intel_extension_for_pytorch
+    elif config['device_str'] == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = False
     trainer = create_trainer(config)
     # Start training
     trainer.fit()
