@@ -197,7 +197,8 @@ class UNet3DTrainer:
 
         total_time = 0.0
         total_count = 0
-        profile_len = self.config['num_iter'] // 2
+        profile_len = min(len(self.loaders['train']), self.config['num_iter']) // 2
+        last_iter = min(len(self.loaders['train']), self.config['num_iter']) - 1
         datatype = torch.float16 if self.config['precision'] == "float16" else torch.bfloat16 if self.config['precision'] == "bfloat16" else torch.float
         if self.config['profile'] and self.config['device_str'] == "xpu":
             for t in self.loaders['train']:
@@ -223,7 +224,8 @@ class UNet3DTrainer:
                 torch.xpu.synchronize()
                 duration = time.time() - start_time
                 print("iteration:{}, training time: {} sec.".format(self.num_iterations, duration))
-                if self.num_iterations >= self.config['num_warmup']:
+                if self.num_iterations >= self.config['num_warmup'] and self.num_iterations < last_iter:
+                    print("the iteration-{} has been calcute perf".format(self.num_iterations))
                     total_time += duration
                     total_count += 1
                 if args.profile and self.num_iterations == profile_len:
@@ -300,7 +302,8 @@ class UNet3DTrainer:
                     duration = time.time() - start_time - cl_duration
                     p.step()
                     print("iteration:{}, training time: {} sec.".format(self.num_iterations, duration))
-                    if self.num_iterations >= self.config['num_warmup']:
+                    if self.num_iterations >= self.config['num_warmup'] and self.num_iterations < last_iter:
+                        print("the iteration-{} has been calcute perf".format(self.num_iterations))
                         total_time += duration
                         total_count += 1
                     if self.num_iterations >= self.config['num_iter']:
@@ -352,7 +355,8 @@ class UNet3DTrainer:
                     torch.xpu.synchronize()
                 duration = time.time() - start_time - cl_duration
                 print("iteration:{}, training time: {} sec.".format(self.num_iterations, duration))
-                if self.num_iterations >= self.config['num_warmup']:
+                if self.num_iterations >= self.config['num_warmup'] and self.num_iterations < last_iter:
+                    print("the iteration-{} has been calcute perf".format(self.num_iterations))
                     total_time += duration
                     total_count += 1
                 if self.num_iterations >= self.config['num_iter']:
