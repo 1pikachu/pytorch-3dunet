@@ -21,6 +21,7 @@ def load_config():
     parser.add_argument('--num_warmup', default=20, type=int, help='test warmup')
     parser.add_argument('--device', default='cpu', type=str, help='cpu, cuda or xpu')
     parser.add_argument('--nv_fuser', action='store_true', default=False, help='enable nv fuser')
+    parser.add_argument('--ipex', action='store_true', default=False)
     args = parser.parse_args()
     config = yaml.safe_load(open(args.config, 'r'))
     # Get a device to train on
@@ -46,6 +47,7 @@ def load_config():
     config['num_iter'] = args.num_iter
     config['num_warmup'] = args.num_warmup
     config['nv_fuser'] = args.nv_fuser
+    config['ipex'] = args.ipex
     return config
 
 def _load_config_yaml(config_file):

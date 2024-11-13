@@ -51,7 +51,7 @@ def create_trainer(config):
 
     # Create the optimizer
     optimizer = create_optimizer(config['optimizer'], model)
-    if config['device'].__str__() == "xpu":
+    if config['device'].__str__() == "xpu" and config['ipex'] == True:
         datatype = torch.float16 if config['precision'] == "float16" else torch.bfloat16 if config['precision'] == "bfloat16" else torch.float
         model, optimizer = torch.xpu.optimize(model=model, optimizer=optimizer, dtype=datatype)
         print("---- enable xpu optimize")
