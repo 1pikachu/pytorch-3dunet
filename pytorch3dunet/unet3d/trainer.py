@@ -210,7 +210,7 @@ class UNet3DTrainer:
                 # to device
                 input, target, weight = self._split_training_batch(t)
                 with torch.autograd.profiler_legacy.profile(enabled=True, use_xpu=True, record_shapes=False) as prof:
-                    with torch.xpu.amp.autocast(enabled=True, dtype=datatype):
+                    with torch.autocast(enabled=True, dtype=datatype):
                         output, loss = self._forward_pass(input, target, weight)
 
                 train_losses.update(loss.item(), self._batch_size(input))
@@ -283,10 +283,10 @@ class UNet3DTrainer:
                     cl_duration = time.time() - cl_start_time
 
                     if self.config['device_str'] == "cuda":
-                        with torch.cuda.amp.autocast(enabled=True, dtype=datatype):
+                        with torch.autocast(enabled=True, dtype=datatype):
                             output, loss = self._forward_pass(input, target, weight)
                     else:
-                        with torch.cpu.amp.autocast(enabled=True, dtype=datatype):
+                        with torch.autocast(enabled=True, dtype=datatype):
                             output, loss = self._forward_pass(input, target, weight)
 
                     train_losses.update(loss.item(), self._batch_size(input))
@@ -332,13 +332,13 @@ class UNet3DTrainer:
                 cl_duration = time.time() - cl_start_time
 
                 if self.config['device_str'] == "cuda":
-                    with torch.cuda.amp.autocast(enabled=True, dtype=datatype):
+                    with torch.autocast(enabled=True, dtype=datatype):
                         output, loss = self._forward_pass(input, target, weight)
                 elif self.config['device_str'] == "xpu":
-                    with torch.xpu.amp.autocast(enabled=True, dtype=datatype):
+                    with torch.autocast(enabled=True, dtype=datatype):
                         output, loss = self._forward_pass(input, target, weight)
                 else:
-                    with torch.cpu.amp.autocast(enabled=True, dtype=datatype):
+                    with torch.autocast(enabled=True, dtype=datatype):
                         output, loss = self._forward_pass(input, target, weight)
 
                 train_losses.update(loss.item(), self._batch_size(input))
