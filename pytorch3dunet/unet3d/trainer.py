@@ -210,7 +210,7 @@ class UNet3DTrainer:
                 # to device
                 input, target, weight = self._split_training_batch(t)
                 with torch.autograd.profiler_legacy.profile(enabled=True, use_xpu=True, record_shapes=False) as prof:
-                    with torch.autocast(enabled=True, dtype=datatype):
+                    with torch.autocast(enabled=True, dtype=datatype, device_type=self.config['device_str']):
                         output, loss = self._forward_pass(input, target, weight)
 
                 train_losses.update(loss.item(), self._batch_size(input))
@@ -282,12 +282,8 @@ class UNet3DTrainer:
                             print("failed to enable NHWC: ", e)
                     cl_duration = time.time() - cl_start_time
 
-                    if self.config['device_str'] == "cuda":
-                        with torch.autocast(enabled=True, dtype=datatype):
-                            output, loss = self._forward_pass(input, target, weight)
-                    else:
-                        with torch.autocast(enabled=True, dtype=datatype):
-                            output, loss = self._forward_pass(input, target, weight)
+                    with torch.autocast(enabled=True, dtype=datatype, device_type=self.config['device_str']):
+                        output, loss = self._forward_pass(input, target, weight)
 
                     train_losses.update(loss.item(), self._batch_size(input))
 
@@ -331,15 +327,8 @@ class UNet3DTrainer:
                         print("failed to enable NHWC: ", e)
                 cl_duration = time.time() - cl_start_time
 
-                if self.config['device_str'] == "cuda":
-                    with torch.autocast(enabled=True, dtype=datatype):
-                        output, loss = self._forward_pass(input, target, weight)
-                elif self.config['device_str'] == "xpu":
-                    with torch.autocast(enabled=True, dtype=datatype):
-                        output, loss = self._forward_pass(input, target, weight)
-                else:
-                    with torch.autocast(enabled=True, dtype=datatype):
-                        output, loss = self._forward_pass(input, target, weight)
+                with torch.autocast(enabled=True, dtype=datatype, device_type=self.config['device_str']):
+                    output, loss = self._forward_pass(input, target, weight)
 
                 train_losses.update(loss.item(), self._batch_size(input))
 
