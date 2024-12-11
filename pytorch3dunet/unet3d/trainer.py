@@ -30,7 +30,7 @@ def create_trainer(config):
     logger.info(f"Sending the model to '{config['device']}'")
     model = model.to(device)
 
-    if config['channels_last'] and device != "xpu":
+    if config['channels_last']:
         try:
             model = model.to(memory_format=torch.channels_last_3d)
             print("--- use NDHWC format")
@@ -273,7 +273,7 @@ class UNet3DTrainer:
                     input, target, weight = self._split_training_batch(t)
 
                     cl_start_time = time.time()
-                    if self.config['channels_last'] and self.config['device_str'] != "xpu":
+                    if self.config['channels_last']:
                         try:
                             input = input.to(memory_format=torch.channels_last_3d)
                             print("---input use NDHWC format")
@@ -318,7 +318,7 @@ class UNet3DTrainer:
                 input, target, weight = self._split_training_batch(t)
 
                 cl_start_time = time.time()
-                if self.config['channels_last'] and self.config['device_str'] != "xpu":
+                if self.config['channels_last']:
                     try:
                         input = input.to(memory_format=torch.channels_last_3d)
                         print("---input use NDHWC format")
