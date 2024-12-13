@@ -11,7 +11,7 @@ function main {
     # requirements
     pip uninstall -y pytorch3dunet && python setup.py develop
     pip install h5py scikit-image==0.20.0 tensorboard pyyaml
-    cp oob-common/context_func.py pytorch3dunet/unet3d/.
+    cp oob-common/context_func.py .
 
     # if multiple use 'xxx,xxx,xxx'
     model_name_list=($(echo "${model_name}" |sed 's/,/ /g'))
