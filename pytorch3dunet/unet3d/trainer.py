@@ -203,13 +203,13 @@ class UNet3DTrainer:
         last_iter = min(len(self.loaders['train']), self.config['num_iter']) - 1
         datatype = torch.float16 if self.config['precision'] == "float16" else torch.bfloat16 if self.config['precision'] == "bfloat16" else torch.float
         with torch.autocast(enabled=True, dtype=datatype, device_type=self.config['device_str']):
-            for t in self.loaders['train']:
+            for index, t in enumerate(self.loaders['train']):
                 logger.info(f'Training iteration [{self.num_iterations}/{self.max_num_iterations}]. '
                             f'Epoch [{self.num_epochs}/{self.max_num_epochs - 1}]')
 
                 start_time = time.time()
                 # to device
-                with context_func(True if self.config['profile'] == profile_len else False, self.config['device_str'], fuser_mode='none', schedule_disable='yes') as prof:
+                with context_func(True if index == profile_len else False, self.config['device_str'], fuser_mode='none', schedule_disable='yes') as prof:
                     input, target, weight = self._split_training_batch(t)
                     output, loss = self._forward_pass(input, target, weight)
                     train_losses.update(loss.item(), self._batch_size(input))
