@@ -209,7 +209,7 @@ class UNet3DTrainer:
 
                 start_time = time.time()
                 # to device
-                with context_func(True if self.config['profile'] == profile_len else False, self.config['device_str'], fuser_mode='none', schedule_disable='yes') as prof
+                with context_func(True if self.config['profile'] == profile_len else False, self.config['device_str'], fuser_mode='none', schedule_disable='yes') as prof:
                     input, target, weight = self._split_training_batch(t)
                     output, loss = self._forward_pass(input, target, weight)
                     train_losses.update(loss.item(), self._batch_size(input))
